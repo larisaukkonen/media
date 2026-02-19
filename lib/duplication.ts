@@ -6,12 +6,12 @@ export async function duplicateScreen(originalScreenId: string) {
 
   await withTransaction(async (client) => {
     await client.query(
-      \`
+      `
       INSERT INTO screens (id, user_id, name)
       SELECT $1, user_id, name || ' (Copy)'
       FROM screens
       WHERE id = $2
-      \`,
+      `,
       [newScreenId, originalScreenId]
     );
 
