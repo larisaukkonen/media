@@ -3,6 +3,22 @@ import { randomUUID } from "crypto";
 
 const ONE_GIB = 1024 * 1024 * 1024;
 
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const userId = searchParams.get("userId");
+
+  const { rows } = userId
+    ? await pool.query(
+        `SELECT * FROM media_assets WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
+        [userId]
+      )
+    : await pool.query(
+        `SELECT * FROM media_assets ORDER BY created_at DESC LIMIT 100`
+      );
+
+  return Response.json({ media: rows });
+}
+
 export async function POST(req: Request) {
   const { userId, fileUrl, fileName, fileSize, type, mimeType } = await req.json();
 
