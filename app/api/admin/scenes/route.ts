@@ -13,10 +13,11 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const { userId, name } = await req.json();
   const store = await loadStore();
+  const defaultUser = await getOrCreateDefaultUser(store);
   const sceneId = newId();
   store.scenes.push({
     id: sceneId,
-    user_id: userId,
+    user_id: userId ?? defaultUser.id,
     name,
     created_at: timestamp(),
     updated_at: timestamp()

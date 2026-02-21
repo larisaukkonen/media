@@ -49,5 +49,5 @@ Set these for at least:
 ## Notes
 
 - This setup stores app state in a JSON blob under Vercel Blob. There is no relational database.
-- A default user is auto-created with email `lari.saukkonen@gmail.com`.
+- A default user is auto-created with email `lari.saukkonen@gmail.com`; the UI no longer requires selecting a user.
 - API routes live under `app/api/...`.

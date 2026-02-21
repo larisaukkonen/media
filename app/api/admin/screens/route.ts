@@ -13,10 +13,11 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const { userId, name } = await req.json();
   const store = await loadStore();
+  const defaultUser = await getOrCreateDefaultUser(store);
   const screenId = newId();
   store.screens.push({
     id: screenId,
-    user_id: userId,
+    user_id: userId ?? defaultUser.id,
     name,
     created_at: timestamp(),
     updated_at: timestamp()
