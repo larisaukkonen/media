@@ -3,6 +3,17 @@ import { randomUUID } from "crypto";
 
 const ONE_GIB = 1024 * 1024 * 1024;
 
+async function getUsageBytes(userId: string) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(file_size), 0) AS total_bytes
+     FROM media_assets
+     WHERE user_id = $1`,
+    [userId]
+  );
+
+  return Number(rows[0]?.total_bytes ?? 0);
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const userId = searchParams.get("userId");
@@ -16,20 +27,14 @@ export async function GET(req: Request) {
         `SELECT * FROM media_assets ORDER BY created_at DESC LIMIT 100`
       );
 
-  return Response.json({ media: rows });
+  const usedBytes = userId ? await getUsageBytes(userId) : 0;
+  return Response.json({ media: rows, usage: { usedBytes, limitBytes: ONE_GIB } });
 }
 
 export async function POST(req: Request) {
   const { userId, fileUrl, fileName, fileSize, type, mimeType } = await req.json();
 
-  const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(file_size), 0) AS total_bytes
-     FROM media_assets
-     WHERE user_id = $1`,
-    [userId]
-  );
-
-  const used = Number(rows[0]?.total_bytes ?? 0);
+  const used = await getUsageBytes(userId);
 
   if ((used + Number(fileSize)) > ONE_GIB) {
     return Response.json({ error: "Storage quota exceeded" }, { status: 400 });

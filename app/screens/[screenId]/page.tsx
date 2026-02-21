@@ -1,6 +1,7 @@
 "use client";
 
 import type { ChangeEvent } from "react";
+import { upload } from "@vercel/blob/client";
 import { useEffect, useMemo, useState } from "react";
 
 type Screen = { id: string; name: string; user_id: string; created_at: string };
@@ -91,6 +92,7 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [sceneDraft, setSceneDraft] = useState<SceneDraft | null>(null);
   const [media, setMedia] = useState<MediaAsset[]>([]);
+  const [usage, setUsage] = useState<{ usedBytes: number; limitBytes: number } | null>(null);
   const [selectedCell, setSelectedCell] = useState<LayoutCell | null>(null);
   const [newSceneName, setNewSceneName] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -142,6 +144,7 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
     }
     const payload = await res.json();
     setMedia(payload.media ?? []);
+    setUsage(payload.usage ?? null);
   };
 
   useEffect(() => {
@@ -316,49 +319,18 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
     setStatus(null);
 
     try {
-      const uploadRes = await fetch("/api/admin/media/upload-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileName: file.name, mimeType: file.type })
-      });
-
-      const uploadPayload = uploadRes.ok ? await uploadRes.json() : {};
-      const signedUrl = uploadPayload.signedUrl as string | undefined;
-      const publicUrl = (uploadPayload.publicUrl as string | undefined) ?? "";
-
-      if (signedUrl && !signedUrl.includes("your-storage-signed-url")) {
-        const putRes = await fetch(signedUrl, {
-          method: "PUT",
-          headers: { "Content-Type": file.type },
-          body: file
-        });
-
-        if (!putRes.ok) {
-          throw new Error("Upload failed.");
-        }
-      } else {
-        setStatus("Upload URL is a placeholder. File metadata saved, but file not uploaded.");
-      }
-
-      const fileUrl = publicUrl || URL.createObjectURL(file);
       const type = file.type.startsWith("video") ? "video" : "image";
-
-      const res = await fetch("/api/admin/media", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      await upload(file.name, file, {
+        access: "public",
+        handleUploadUrl: "/api/admin/media/upload",
+        clientPayload: {
           userId: screen.user_id,
-          fileUrl,
           fileName: file.name,
           fileSize: file.size,
-          type,
-          mimeType: file.type
-        })
+          mimeType: file.type,
+          type
+        }
       });
-
-      if (!res.ok) {
-        throw new Error("Failed to save media metadata.");
-      }
 
       await loadMedia(screen.user_id);
     } catch (error) {
@@ -617,13 +589,24 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
         <section className="panel">
           <div className="panel-header">
             <h2>Media Library</h2>
-            <div className="muted">Upload images or videos and reuse them in timelines.</div>
+            <div className="media-header">
+              <div className="muted">Upload images or videos and reuse them in timelines.</div>
+              <div className="usage">
+                {usage ? (
+                  <>
+                    {Math.round(usage.usedBytes / (1024 * 1024))} MB /{" "}
+                    {Math.round(usage.limitBytes / (1024 * 1024))} MB
+                  </>
+                ) : (
+                  "Usage: -"
+                )}
+              </div>
+            </div>
           </div>
           <div className="row">
             <input type="file" accept="image/*,video/*" multiple onChange={handleFileSelect} />
             <div className="status">{uploading ? "Uploading..." : ""}</div>
           </div>
-          <div className="hint">Upload URL signing is still a placeholder until storage is wired.</div>
           <div className="media-grid">
             {media.map((asset) => (
               <div key={asset.id} className="media-card">
