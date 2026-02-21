@@ -348,6 +348,26 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
     event.target.value = "";
   };
 
+  const removeMedia = async (mediaId: string) => {
+    if (!screen?.user_id) return;
+    const res = await fetch("/api/admin/media", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: screen.user_id, mediaId })
+    });
+
+    if (!res.ok) {
+      setStatus("Failed to remove media.");
+      return;
+    }
+
+    const payload = await res.json();
+    if (payload?.usage) {
+      setUsage(payload.usage);
+    }
+    setMedia((prev) => prev.filter((item) => item.id !== mediaId));
+  };
+
   return (
     <main className="shell">
       <header className="hero">
@@ -616,6 +636,15 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
                   ) : (
                     <video src={asset.file_url} />
                   )}
+                  <div className="media-overlay">
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => removeMedia(asset.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
                 </div>
                 <div className="media-meta">
                   <strong>{asset.file_name}</strong>

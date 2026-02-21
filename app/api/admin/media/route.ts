@@ -49,3 +49,22 @@ export async function POST(req: Request) {
 
   return Response.json({ mediaId });
 }
+
+export async function DELETE(req: Request) {
+  const { userId, mediaId } = await req.json();
+  if (!userId || !mediaId) {
+    return Response.json({ error: "Missing userId or mediaId" }, { status: 400 });
+  }
+
+  const { rowCount } = await pool.query(
+    `DELETE FROM media_assets WHERE id = $1 AND user_id = $2`,
+    [mediaId, userId]
+  );
+
+  if (!rowCount) {
+    return Response.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const usedBytes = await getUsageBytes(userId);
+  return Response.json({ ok: true, usage: { usedBytes, limitBytes: ONE_GIB } });
+}
