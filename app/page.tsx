@@ -1,83 +1,51 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type AppUser = { id: string; email: string | null; created_at: string };
 type Screen = { id: string; name: string; user_id: string; created_at: string };
-type Scene = { id: string; name: string; user_id: string; created_at: string };
-type Monitor = { id: string; name: string; user_id: string; device_token: string; created_at: string };
-type MediaAsset = { id: string; file_name: string; file_url: string; user_id: string; created_at: string };
-
-type DashboardData = {
-  users: AppUser[];
-  screens: Screen[];
-  scenes: Scene[];
-  monitors: Monitor[];
-  media: MediaAsset[];
-};
-
-const emptyData: DashboardData = {
-  users: [],
-  screens: [],
-  scenes: [],
-  monitors: [],
-  media: []
-};
-
-function randomToken() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `monitor-${Date.now()}`;
-}
 
 export default function Page() {
-  const [data, setData] = useState<DashboardData>(emptyData);
-  const [loading, setLoading] = useState(false);
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [screens, setScreens] = useState<Screen[]>([]);
   const [userId, setUserId] = useState("");
   const [email, setEmail] = useState("");
   const [screenName, setScreenName] = useState("");
-  const [sceneName, setSceneName] = useState("");
-  const [monitorName, setMonitorName] = useState("");
-  const [deviceToken, setDeviceToken] = useState("");
   const [status, setStatus] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const userFilterQuery = useMemo(() => (userId ? `?userId=${encodeURIComponent(userId)}` : ""), [userId]);
+  const screenQuery = useMemo(
+    () => (userId ? `?userId=${encodeURIComponent(userId)}` : ""),
+    [userId]
+  );
 
-  const loadData = useCallback(async () => {
+  const load = async () => {
     setLoading(true);
     setStatus(null);
-
     try {
-      const [usersRes, screensRes, scenesRes, monitorsRes, mediaRes] = await Promise.all([
+      const [usersRes, screensRes] = await Promise.all([
         fetch("/api/admin/users"),
-        fetch(`/api/admin/screens${userFilterQuery}`),
-        fetch(`/api/admin/scenes${userFilterQuery}`),
-        fetch(`/api/admin/monitors${userFilterQuery}`),
-        fetch(`/api/admin/media${userFilterQuery}`)
+        fetch(`/api/admin/screens${screenQuery}`)
       ]);
 
-      if (![usersRes, screensRes, scenesRes, monitorsRes, mediaRes].every((res) => res.ok)) {
-        throw new Error("Failed to load dashboard data.");
+      if (!usersRes.ok || !screensRes.ok) {
+        throw new Error("Failed to load data.");
       }
 
-      const users = (await usersRes.json()).users ?? [];
-      const screens = (await screensRes.json()).screens ?? [];
-      const scenes = (await scenesRes.json()).scenes ?? [];
-      const monitors = (await monitorsRes.json()).monitors ?? [];
-      const media = (await mediaRes.json()).media ?? [];
-
-      setData({ users, screens, scenes, monitors, media });
+      const usersPayload = await usersRes.json();
+      const screensPayload = await screensRes.json();
+      setUsers(usersPayload.users ?? []);
+      setScreens(screensPayload.screens ?? []);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Unexpected error.");
     } finally {
       setLoading(false);
     }
-  }, [userFilterQuery]);
+  };
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    load();
+  }, [screenQuery]);
 
   const createUser = async () => {
     setStatus(null);
@@ -95,13 +63,12 @@ export default function Page() {
     const payload = await res.json();
     setUserId(payload.userId);
     setEmail("");
-    await loadData();
-    setStatus("User created.");
+    await load();
   };
 
   const createScreen = async () => {
     if (!userId) {
-      setStatus("Set a user id before creating screens.");
+      setStatus("Pick a user to create screens.");
       return;
     }
 
@@ -117,214 +84,92 @@ export default function Page() {
     }
 
     setScreenName("");
-    await loadData();
-  };
-
-  const createScene = async () => {
-    if (!userId) {
-      setStatus("Set a user id before creating scenes.");
-      return;
-    }
-
-    const res = await fetch("/api/admin/scenes", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, name: sceneName || "Untitled scene" })
-    });
-
-    if (!res.ok) {
-      setStatus("Failed to create scene.");
-      return;
-    }
-
-    setSceneName("");
-    await loadData();
-  };
-
-  const createMonitor = async () => {
-    if (!userId) {
-      setStatus("Set a user id before creating monitors.");
-      return;
-    }
-
-    const token = deviceToken || randomToken();
-    const res = await fetch("/api/admin/monitors", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId, name: monitorName || "New monitor", deviceToken: token })
-    });
-
-    if (!res.ok) {
-      setStatus("Failed to create monitor.");
-      return;
-    }
-
-    setMonitorName("");
-    setDeviceToken("");
-    await loadData();
+    await load();
   };
 
   return (
-    <main>
-      <header>
-        <div className="badge">media-admin • draft UI</div>
-        <h1>Media Admin Console</h1>
+    <main className="shell">
+      <header className="hero">
+        <div className="pill">Media Admin</div>
+        <h1>Screen Builder</h1>
         <p>
-          This is a lightweight admin surface for the API you deployed. Create users, screens, scenes, and
-          monitors, then wire publish flows and playback on top.
+          Create screens, set their orientation, build fixed grids, and attach reusable scenes with
+          per-cell timelines.
         </p>
       </header>
 
-      <section className="grid">
-        <div className="card">
-          <h3>Users</h3>
-          <p>{data.users.length} total</p>
-        </div>
-        <div className="card">
-          <h3>Screens</h3>
-          <p>{data.screens.length} total</p>
-        </div>
-        <div className="card">
-          <h3>Scenes</h3>
-          <p>{data.scenes.length} total</p>
-        </div>
-        <div className="card">
-          <h3>Monitors</h3>
-          <p>{data.monitors.length} total</p>
-        </div>
-      </section>
-
-      <section className="section card">
-        <h2>Active Workspace</h2>
-        <div className="form-row">
-          <input
-            placeholder="Current user id"
-            value={userId}
-            onChange={(event) => setUserId(event.target.value)}
-          />
-          <button type="button" className="secondary" onClick={loadData} disabled={loading}>
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Active User</h2>
+          <button type="button" className="ghost" onClick={load} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
           </button>
         </div>
-        <div className="mono">Leave user id empty to see all records.</div>
+        <div className="row">
+          <select value={userId} onChange={(event) => setUserId(event.target.value)}>
+            <option value="">Select user</option>
+            {users.map((user) => (
+              <option key={user.id} value={user.id}>
+                {user.email ? `${user.email} (${user.id.slice(0, 8)})` : user.id}
+              </option>
+            ))}
+          </select>
+          <div className="hint">No user yet? Create one below.</div>
+        </div>
       </section>
 
-      <section className="section">
-        <h2>Create User</h2>
-        <div className="form-row">
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Create User</h2>
+        </div>
+        <div className="row">
           <input
             placeholder="Email (optional)"
             value={email}
             onChange={(event) => setEmail(event.target.value)}
           />
-          <button type="button" onClick={createUser}>Create user</button>
+          <button type="button" onClick={createUser}>
+            Create user
+          </button>
         </div>
       </section>
 
-      <section className="section">
-        <h2>Create Screen</h2>
-        <div className="form-row">
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Create Screen</h2>
+        </div>
+        <div className="row">
           <input
             placeholder="Screen name"
             value={screenName}
             onChange={(event) => setScreenName(event.target.value)}
           />
-          <button type="button" onClick={createScreen}>Create screen</button>
+          <button type="button" onClick={createScreen}>
+            Create screen
+          </button>
         </div>
       </section>
 
-      <section className="section">
-        <h2>Create Scene</h2>
-        <div className="form-row">
-          <input
-            placeholder="Scene name"
-            value={sceneName}
-            onChange={(event) => setSceneName(event.target.value)}
-          />
-          <button type="button" onClick={createScene}>Create scene</button>
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Screens</h2>
+          <div className="hint">Click a screen to edit layout and timelines.</div>
         </div>
-      </section>
-
-      <section className="section">
-        <h2>Create Monitor</h2>
-        <div className="form-row">
-          <input
-            placeholder="Monitor name"
-            value={monitorName}
-            onChange={(event) => setMonitorName(event.target.value)}
-          />
-          <input
-            placeholder="Device token (optional)"
-            value={deviceToken}
-            onChange={(event) => setDeviceToken(event.target.value)}
-          />
-          <button type="button" onClick={createMonitor}>Create monitor</button>
-        </div>
-      </section>
-
-      {status ? (
-        <section className="section card">
-          <div>{status}</div>
-        </section>
-      ) : null}
-
-      <section className="section grid">
-        <div className="card">
-          <h3>Recent Screens</h3>
-          <div className="list">
-            {data.screens.slice(0, 5).map((screen) => (
-              <div className="list-item" key={screen.id}>
+        <div className="list">
+          {screens.map((screen) => (
+            <a key={screen.id} className="list-item" href={`/screens/${screen.id}`}>
+              <div>
                 <strong>{screen.name}</strong>
-                <span className="mono">{screen.id}</span>
+                <div className="muted">{screen.id}</div>
               </div>
-            ))}
-            {!data.screens.length && <div className="list-item">No screens yet.</div>}
-          </div>
-        </div>
-
-        <div className="card">
-          <h3>Recent Scenes</h3>
-          <div className="list">
-            {data.scenes.slice(0, 5).map((scene) => (
-              <div className="list-item" key={scene.id}>
-                <strong>{scene.name}</strong>
-                <span className="mono">{scene.id}</span>
-              </div>
-            ))}
-            {!data.scenes.length && <div className="list-item">No scenes yet.</div>}
-          </div>
-        </div>
-
-        <div className="card">
-          <h3>Recent Monitors</h3>
-          <div className="list">
-            {data.monitors.slice(0, 5).map((monitor) => (
-              <div className="list-item" key={monitor.id}>
-                <strong>{monitor.name}</strong>
-                <span className="mono">{monitor.device_token}</span>
-              </div>
-            ))}
-            {!data.monitors.length && <div className="list-item">No monitors yet.</div>}
-          </div>
-        </div>
-
-        <div className="card">
-          <h3>Recent Media</h3>
-          <div className="list">
-            {data.media.slice(0, 5).map((item) => (
-              <div className="list-item" key={item.id}>
-                <strong>{item.file_name}</strong>
-                <span className="mono">{item.file_url}</span>
-              </div>
-            ))}
-            {!data.media.length && <div className="list-item">No media yet.</div>}
-          </div>
+              <span className="tag">Edit</span>
+            </a>
+          ))}
+          {!screens.length && <div className="empty">No screens yet.</div>}
         </div>
       </section>
 
-      <footer>
-        Next steps: add auth, implement upload URL signing, and wire draft/publish flows.
-      </footer>
+      {status ? <div className="banner">{status}</div> : null}
     </main>
   );
 }

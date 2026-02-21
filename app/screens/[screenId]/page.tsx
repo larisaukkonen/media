@@ -1,0 +1,404 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type Screen = { id: string; name: string; user_id: string; created_at: string };
+
+type ScreenDraft = {
+  id: string;
+  screen_id: string;
+  title: string | null;
+  layout_json: LayoutJson;
+};
+
+type LayoutCell = {
+  id: string;
+  sceneId: string | null;
+};
+
+type LayoutJson = {
+  orientation: "landscape" | "portrait";
+  rows: number;
+  cols: number;
+  cells: LayoutCell[];
+};
+
+type Scene = { id: string; name: string; user_id: string; created_at: string };
+
+type SceneDraft = {
+  id: string;
+  scene_id: string;
+  data_json: SceneData;
+};
+
+type TimelineItem = {
+  id: string;
+  type: "video" | "image" | "text";
+  label: string;
+  durationMs: number;
+  src?: string | null;
+};
+
+type SceneData = {
+  timeline: TimelineItem[];
+};
+
+function ensureGrid(layout: LayoutJson): LayoutJson {
+  const rows = Math.max(1, Math.min(6, layout.rows || 1));
+  const cols = Math.max(1, Math.min(6, layout.cols || 1));
+  const cells: LayoutCell[] = [];
+
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      const id = `${r}-${c}`;
+      const existing = layout.cells?.find((cell) => cell.id === id);
+      cells.push({ id, sceneId: existing?.sceneId ?? null });
+    }
+  }
+
+  return { ...layout, rows, cols, cells };
+}
+
+function newTimelineItem(type: TimelineItem["type"]): TimelineItem {
+  return {
+    id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}`,
+    type,
+    label: type === "text" ? "Headline" : type === "image" ? "Image" : "Video clip",
+    durationMs: 5000,
+    src: ""
+  };
+}
+
+export default function ScreenEditor({ params }: { params: { screenId: string } }) {
+  const [screen, setScreen] = useState<Screen | null>(null);
+  const [draft, setDraft] = useState<ScreenDraft | null>(null);
+  const [layout, setLayout] = useState<LayoutJson>({
+    orientation: "landscape",
+    rows: 1,
+    cols: 1,
+    cells: [{ id: "0-0", sceneId: null }]
+  });
+  const [scenes, setScenes] = useState<Scene[]>([]);
+  const [sceneDraft, setSceneDraft] = useState<SceneDraft | null>(null);
+  const [selectedCell, setSelectedCell] = useState<LayoutCell | null>(null);
+  const [newSceneName, setNewSceneName] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const selectedSceneId = selectedCell?.sceneId ?? null;
+  const timeline = sceneDraft?.data_json?.timeline ?? [];
+
+  const gridTemplate = useMemo(
+    () => ({
+      gridTemplateColumns: `repeat(${layout.cols}, 1fr)`,
+      gridTemplateRows: `repeat(${layout.rows}, 1fr)`
+    }),
+    [layout.cols, layout.rows]
+  );
+
+  const load = async () => {
+    setStatus(null);
+    const [screenRes, draftRes, scenesRes] = await Promise.all([
+      fetch(`/api/admin/screens/${params.screenId}`),
+      fetch(`/api/admin/screens/${params.screenId}/draft`),
+      fetch(`/api/admin/scenes`)
+    ]);
+
+    if (!screenRes.ok || !draftRes.ok || !scenesRes.ok) {
+      setStatus("Failed to load screen data.");
+      return;
+    }
+
+    const screenPayload = await screenRes.json();
+    const draftPayload = await draftRes.json();
+    const scenesPayload = await scenesRes.json();
+
+    setScreen(screenPayload);
+    setDraft(draftPayload.draft);
+    const normalized = ensureGrid(draftPayload.draft.layout_json);
+    setLayout(normalized);
+    setScenes(scenesPayload.scenes ?? []);
+  };
+
+  useEffect(() => {
+    load();
+  }, [params.screenId]);
+
+  useEffect(() => {
+    if (!selectedSceneId) {
+      setSceneDraft(null);
+      return;
+    }
+
+    const loadScene = async () => {
+      const res = await fetch(`/api/admin/scenes/${selectedSceneId}/draft`);
+      if (!res.ok) {
+        setStatus("Failed to load scene draft.");
+        return;
+      }
+      const payload = await res.json();
+      setSceneDraft(payload.draft);
+    };
+
+    loadScene();
+  }, [selectedSceneId]);
+
+  const updateLayout = async (next: LayoutJson) => {
+    setSaving(true);
+    const res = await fetch(`/api/admin/screens/${params.screenId}/draft`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ layoutJson: next })
+    });
+    if (!res.ok) {
+      setStatus("Failed to save layout.");
+    } else {
+      const payload = await res.json();
+      setDraft(payload.draft);
+      setLayout(ensureGrid(payload.draft.layout_json));
+    }
+    setSaving(false);
+  };
+
+  const onGridChange = async (rows: number, cols: number) => {
+    const next = ensureGrid({ ...layout, rows, cols });
+    setLayout(next);
+    await updateLayout(next);
+  };
+
+  const onOrientationChange = async (orientation: LayoutJson["orientation"]) => {
+    const next = { ...layout, orientation };
+    setLayout(next);
+    await updateLayout(next);
+  };
+
+  const onAssignScene = async (cellId: string, sceneId: string | null) => {
+    const nextCells = layout.cells.map((cell) =>
+      cell.id === cellId ? { ...cell, sceneId } : cell
+    );
+    const next = { ...layout, cells: nextCells };
+    setLayout(next);
+    await updateLayout(next);
+  };
+
+  const createScene = async () => {
+    if (!screen?.user_id) {
+      setStatus("Missing screen user id.");
+      return;
+    }
+
+    const res = await fetch("/api/admin/scenes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: screen.user_id, name: newSceneName || "Untitled scene" })
+    });
+
+    if (!res.ok) {
+      setStatus("Failed to create scene.");
+      return;
+    }
+
+    setNewSceneName("");
+    await load();
+  };
+
+  const saveTimeline = async (nextTimeline: TimelineItem[]) => {
+    if (!selectedSceneId) return;
+    setSaving(true);
+    const res = await fetch(`/api/admin/scenes/${selectedSceneId}/draft`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataJson: { timeline: nextTimeline } })
+    });
+
+    if (!res.ok) {
+      setStatus("Failed to save timeline.");
+    } else {
+      const payload = await res.json();
+      setSceneDraft(payload.draft);
+    }
+    setSaving(false);
+  };
+
+  const addTimelineItem = async (type: TimelineItem["type"]) => {
+    const next = [...timeline, newTimelineItem(type)];
+    await saveTimeline(next);
+  };
+
+  const updateTimelineItem = async (index: number, patch: Partial<TimelineItem>) => {
+    const next = timeline.map((item, i) => (i === index ? { ...item, ...patch } : item));
+    await saveTimeline(next);
+  };
+
+  const moveTimelineItem = async (index: number, direction: -1 | 1) => {
+    const next = [...timeline];
+    const target = index + direction;
+    if (target < 0 || target >= next.length) return;
+    const temp = next[index];
+    next[index] = next[target];
+    next[target] = temp;
+    await saveTimeline(next);
+  };
+
+  const removeTimelineItem = async (index: number) => {
+    const next = timeline.filter((_, i) => i !== index);
+    await saveTimeline(next);
+  };
+
+  return (
+    <main className="shell">
+      <header className="hero">
+        <div className="pill">Screen Editor</div>
+        <h1>{screen?.name ?? "Loading..."}</h1>
+        <p>Configure orientation, build a fixed grid, and assign reusable scenes to each cell.</p>
+      </header>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Screen Layout</h2>
+          <div className="muted">Draft id: {draft?.id ?? "-"}</div>
+        </div>
+        <div className="row">
+          <label className="field">
+            Orientation
+            <select
+              value={layout.orientation}
+              onChange={(event) => onOrientationChange(event.target.value as LayoutJson["orientation"])}
+            >
+              <option value="landscape">Landscape</option>
+              <option value="portrait">Portrait</option>
+            </select>
+          </label>
+          <label className="field">
+            Rows
+            <input
+              type="number"
+              min={1}
+              max={6}
+              value={layout.rows}
+              onChange={(event) => onGridChange(Number(event.target.value), layout.cols)}
+            />
+          </label>
+          <label className="field">
+            Columns
+            <input
+              type="number"
+              min={1}
+              max={6}
+              value={layout.cols}
+              onChange={(event) => onGridChange(layout.rows, Number(event.target.value))}
+            />
+          </label>
+          <div className="status">{saving ? "Saving..." : ""}</div>
+        </div>
+
+        <div className={`grid-preview ${layout.orientation}`} style={gridTemplate}>
+          {layout.cells.map((cell) => (
+            <button
+              type="button"
+              key={cell.id}
+              className={`cell ${selectedCell?.id === cell.id ? "active" : ""}`}
+              onClick={() => setSelectedCell(cell)}
+            >
+              <span>Cell {cell.id}</span>
+              <strong>{cell.sceneId ? "Scene linked" : "Empty"}</strong>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Assign Scene To Selected Cell</h2>
+          <div className="muted">
+            {selectedCell ? `Selected: ${selectedCell.id}` : "Select a cell to attach a scene."}
+          </div>
+        </div>
+        <div className="row">
+          <select
+            value={selectedSceneId ?? ""}
+            onChange={(event) => onAssignScene(selectedCell?.id ?? "", event.target.value || null)}
+            disabled={!selectedCell}
+          >
+            <option value="">No scene</option>
+            {scenes.map((scene) => (
+              <option key={scene.id} value={scene.id}>
+                {scene.name}
+              </option>
+            ))}
+          </select>
+          <input
+            placeholder="New scene name"
+            value={newSceneName}
+            onChange={(event) => setNewSceneName(event.target.value)}
+          />
+          <button type="button" onClick={createScene}>
+            Create scene
+          </button>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Scene Timeline</h2>
+          <div className="muted">{selectedSceneId ? `Scene: ${selectedSceneId}` : "Select a cell."}</div>
+        </div>
+
+        <div className="timeline-actions">
+          <button type="button" onClick={() => addTimelineItem("video")} disabled={!selectedSceneId}>
+            Add video
+          </button>
+          <button type="button" onClick={() => addTimelineItem("image")} disabled={!selectedSceneId}>
+            Add image
+          </button>
+          <button type="button" onClick={() => addTimelineItem("text")} disabled={!selectedSceneId}>
+            Add text
+          </button>
+        </div>
+
+        <div className="timeline">
+          {timeline.map((item, index) => (
+            <div key={item.id} className="timeline-item">
+              <div className="timeline-row">
+                <strong>{item.type.toUpperCase()}</strong>
+                <div className="timeline-controls">
+                  <button type="button" className="ghost" onClick={() => moveTimelineItem(index, -1)}>
+                    Up
+                  </button>
+                  <button type="button" className="ghost" onClick={() => moveTimelineItem(index, 1)}>
+                    Down
+                  </button>
+                  <button type="button" className="ghost" onClick={() => removeTimelineItem(index)}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+              <div className="row">
+                <input
+                  placeholder="Label"
+                  value={item.label}
+                  onChange={(event) => updateTimelineItem(index, { label: event.target.value })}
+                />
+                <input
+                  placeholder="Source URL"
+                  value={item.src ?? ""}
+                  onChange={(event) => updateTimelineItem(index, { src: event.target.value })}
+                />
+                <input
+                  type="number"
+                  min={500}
+                  step={500}
+                  value={item.durationMs}
+                  onChange={(event) => updateTimelineItem(index, { durationMs: Number(event.target.value) })}
+                />
+              </div>
+            </div>
+          ))}
+          {!timeline.length && <div className="empty">No timeline items yet.</div>}
+        </div>
+      </section>
+
+      {status ? <div className="banner">{status}</div> : null}
+    </main>
+  );
+}
