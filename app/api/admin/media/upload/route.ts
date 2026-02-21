@@ -1,6 +1,5 @@
-import { pool } from "@/lib/db";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
-import { randomUUID } from "crypto";
+import { loadStore, newId, saveStore } from "@/lib/blobStore";
 import { NextResponse } from "next/server";
 
 const ONE_GIB = 1024 * 1024 * 1024;
@@ -14,14 +13,10 @@ type UploadPayload = {
 };
 
 async function getUsageBytes(userId: string) {
-  const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(file_size), 0) AS total_bytes
-     FROM media_assets
-     WHERE user_id = $1`,
-    [userId]
-  );
-
-  return Number(rows[0]?.total_bytes ?? 0);
+  const store = await loadStore();
+  return store.mediaAssets
+    .filter((item) => item.user_id === userId)
+    .reduce((sum, item) => sum + Number(item.file_size ?? 0), 0);
 }
 
 export async function POST(request: Request) {
@@ -60,12 +55,19 @@ export async function POST(request: Request) {
           return;
         }
 
-        const mediaId = randomUUID();
-        await pool.query(
-          `INSERT INTO media_assets (id, user_id, file_url, file_name, file_size, type, mime_type)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [mediaId, payload.userId, blob.url, payload.fileName, payload.fileSize, payload.type, payload.mimeType]
-        );
+        const store = await loadStore();
+        const mediaId = newId();
+        store.mediaAssets.push({
+          id: mediaId,
+          user_id: payload.userId,
+          file_url: blob.url,
+          file_name: payload.fileName,
+          file_size: Number(payload.fileSize),
+          type: payload.type,
+          mime_type: payload.mimeType,
+          created_at: new Date().toISOString()
+        });
+        await saveStore(store);
       }
     });
 

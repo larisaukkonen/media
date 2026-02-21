@@ -1,30 +1,26 @@
-import { pool } from "@/lib/db";
-import { randomUUID } from "crypto";
+import { getOrCreateDefaultUser, loadStore, newId, saveStore, timestamp } from "@/lib/blobStore";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const userId = searchParams.get("userId");
 
-  const { rows } = userId
-    ? await pool.query(
-        `SELECT * FROM scenes WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
-        [userId]
-      )
-    : await pool.query(
-        `SELECT * FROM scenes ORDER BY created_at DESC LIMIT 100`
-      );
-
-  return Response.json({ scenes: rows });
+  const store = await loadStore();
+  await getOrCreateDefaultUser(store);
+  const scenes = userId ? store.scenes.filter((s) => s.user_id === userId) : store.scenes;
+  return Response.json({ scenes });
 }
 
 export async function POST(req: Request) {
   const { userId, name } = await req.json();
-  const sceneId = randomUUID();
-
-  await pool.query(
-    `INSERT INTO scenes (id, user_id, name) VALUES ($1, $2, $3)`,
-    [sceneId, userId, name]
-  );
-
+  const store = await loadStore();
+  const sceneId = newId();
+  store.scenes.push({
+    id: sceneId,
+    user_id: userId,
+    name,
+    created_at: timestamp(),
+    updated_at: timestamp()
+  });
+  await saveStore(store);
   return Response.json({ sceneId });
 }

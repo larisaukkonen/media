@@ -1,22 +1,16 @@
-import { pool } from "@/lib/db";
-import { randomUUID } from "crypto";
+import { getOrCreateDefaultUser, loadStore, newId, saveStore, timestamp } from "@/lib/blobStore";
 
 export async function GET() {
-  const { rows } = await pool.query(
-    `SELECT id, email, created_at FROM app_users ORDER BY created_at DESC LIMIT 100`
-  );
-
-  return Response.json({ users: rows });
+  const store = await loadStore();
+  await getOrCreateDefaultUser(store);
+  return Response.json({ users: store.users });
 }
 
 export async function POST(req: Request) {
   const { email } = await req.json();
-  const userId = randomUUID();
-
-  await pool.query(
-    `INSERT INTO app_users (id, email) VALUES ($1, $2)`,
-    [userId, email ?? null]
-  );
-
+  const store = await loadStore();
+  const userId = newId();
+  store.users.push({ id: userId, email: email ?? null, created_at: timestamp() });
+  await saveStore(store);
   return Response.json({ userId });
 }

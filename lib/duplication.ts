@@ -1,22 +1,21 @@
-import { randomUUID } from "crypto";
-import { withTransaction } from "./transactions";
+import { loadStore, newId, saveStore, timestamp } from "./blobStore";
 
 export async function duplicateScreen(originalScreenId: string) {
-  const newScreenId = randomUUID();
+  const store = await loadStore();
+  const original = store.screens.find((screen) => screen.id === originalScreenId);
+  if (!original) {
+    throw new Error("Screen not found");
+  }
 
-  await withTransaction(async (client) => {
-    await client.query(
-      `
-      INSERT INTO screens (id, user_id, name)
-      SELECT $1, user_id, name || ' (Copy)'
-      FROM screens
-      WHERE id = $2
-      `,
-      [newScreenId, originalScreenId]
-    );
-
-    // TODO: Duplicate screen_versions, scenes, scene_version_items (depending on your data model)
+  const newScreenId = newId();
+  store.screens.push({
+    id: newScreenId,
+    user_id: original.user_id,
+    name: `${original.name} (Copy)`,
+    created_at: timestamp(),
+    updated_at: timestamp()
   });
 
+  await saveStore(store);
   return newScreenId;
 }

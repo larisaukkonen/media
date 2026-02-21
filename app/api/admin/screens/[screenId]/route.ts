@@ -1,17 +1,14 @@
-import { pool } from "@/lib/db";
+import { loadStore } from "@/lib/blobStore";
 
 export async function GET(
   req: Request,
   { params }: { params: { screenId: string } }
 ) {
-  const { rows } = await pool.query(
-    `SELECT * FROM screens WHERE id = $1`,
-    [params.screenId]
-  );
-
-  if (!rows.length) {
+  const store = await loadStore();
+  const screen = store.screens.find((item) => item.id === params.screenId);
+  if (!screen) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  return Response.json(rows[0]);
+  return Response.json(screen);
 }

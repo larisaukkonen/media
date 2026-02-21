@@ -1,34 +1,22 @@
-import { pool } from "@/lib/db";
-import { randomUUID } from "crypto";
+import { deleteBlob, loadStore, newId, saveStore } from "@/lib/blobStore";
 
 const ONE_GIB = 1024 * 1024 * 1024;
 
 async function getUsageBytes(userId: string) {
-  const { rows } = await pool.query(
-    `SELECT COALESCE(SUM(file_size), 0) AS total_bytes
-     FROM media_assets
-     WHERE user_id = $1`,
-    [userId]
-  );
-
-  return Number(rows[0]?.total_bytes ?? 0);
+  const store = await loadStore();
+  return store.mediaAssets
+    .filter((item) => item.user_id === userId)
+    .reduce((sum, item) => sum + Number(item.file_size ?? 0), 0);
 }
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const userId = searchParams.get("userId");
 
-  const { rows } = userId
-    ? await pool.query(
-        `SELECT * FROM media_assets WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
-        [userId]
-      )
-    : await pool.query(
-        `SELECT * FROM media_assets ORDER BY created_at DESC LIMIT 100`
-      );
-
+  const store = await loadStore();
+  const media = userId ? store.mediaAssets.filter((m) => m.user_id === userId) : store.mediaAssets;
   const usedBytes = userId ? await getUsageBytes(userId) : 0;
-  return Response.json({ media: rows, usage: { usedBytes, limitBytes: ONE_GIB } });
+  return Response.json({ media, usage: { usedBytes, limitBytes: ONE_GIB } });
 }
 
 export async function POST(req: Request) {
@@ -40,13 +28,19 @@ export async function POST(req: Request) {
     return Response.json({ error: "Storage quota exceeded" }, { status: 400 });
   }
 
-  const mediaId = randomUUID();
-  await pool.query(
-    `INSERT INTO media_assets (id, user_id, file_url, file_name, file_size, type, mime_type)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [mediaId, userId, fileUrl, fileName, fileSize, type, mimeType]
-  );
-
+  const store = await loadStore();
+  const mediaId = newId();
+  store.mediaAssets.push({
+    id: mediaId,
+    user_id: userId,
+    file_url: fileUrl,
+    file_name: fileName,
+    file_size: Number(fileSize),
+    type,
+    mime_type: mimeType,
+    created_at: new Date().toISOString()
+  });
+  await saveStore(store);
   return Response.json({ mediaId });
 }
 
@@ -56,15 +50,15 @@ export async function DELETE(req: Request) {
     return Response.json({ error: "Missing userId or mediaId" }, { status: 400 });
   }
 
-  const { rowCount } = await pool.query(
-    `DELETE FROM media_assets WHERE id = $1 AND user_id = $2`,
-    [mediaId, userId]
-  );
-
-  if (!rowCount) {
+  const store = await loadStore();
+  const mediaItem = store.mediaAssets.find((item) => item.id === mediaId && item.user_id === userId);
+  if (!mediaItem) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
+  store.mediaAssets = store.mediaAssets.filter((item) => item.id !== mediaId);
+  await saveStore(store);
+  await deleteBlob(mediaItem.file_url);
   const usedBytes = await getUsageBytes(userId);
   return Response.json({ ok: true, usage: { usedBytes, limitBytes: ONE_GIB } });
 }

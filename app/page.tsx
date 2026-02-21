@@ -34,7 +34,11 @@ export default function Page() {
 
       const usersPayload = await usersRes.json();
       const screensPayload = await screensRes.json();
-      setUsers(usersPayload.users ?? []);
+      const loadedUsers = usersPayload.users ?? [];
+      setUsers(loadedUsers);
+      if (!userId && loadedUsers.length) {
+        setUserId(loadedUsers[0].id);
+      }
       setScreens(screensPayload.screens ?? []);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Unexpected error.");

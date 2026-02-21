@@ -1,25 +1,21 @@
-import { pool } from "@/lib/db";
-import { randomUUID } from "crypto";
+import { loadStore, newId, saveStore, timestamp } from "@/lib/blobStore";
 
 async function getOrCreateDraft(screenId: string) {
-  const { rows } = await pool.query(
-    `SELECT * FROM screen_versions
-     WHERE screen_id = $1 AND status = 'draft'
-     ORDER BY created_at DESC
-     LIMIT 1`,
-    [screenId]
-  );
+  const store = await loadStore();
+  let draft = store.screenVersions
+    .filter((item) => item.screen_id === screenId && item.status === "draft")
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
 
-  if (rows.length) {
-    return rows[0];
+  if (draft) {
+    return { draft, store };
   }
 
-  const versionId = randomUUID();
-  const { rows: versionRows } = await pool.query(
-    `SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM screen_versions WHERE screen_id = $1`,
-    [screenId]
-  );
-  const nextVersion = Number(versionRows[0]?.next_version ?? 1);
+  const versionId = newId();
+  const nextVersion =
+    Math.max(
+      0,
+      ...store.screenVersions.filter((v) => v.screen_id === screenId).map((v) => v.version)
+    ) + 1;
 
   const layoutJson = {
     orientation: "landscape",
@@ -28,25 +24,26 @@ async function getOrCreateDraft(screenId: string) {
     cells: [{ id: "0-0", sceneId: null }]
   };
 
-  await pool.query(
-    `INSERT INTO screen_versions (id, screen_id, version, status, title, layout_json)
-     VALUES ($1, $2, $3, 'draft', $4, $5::jsonb)`,
-    [versionId, screenId, nextVersion, "Draft", JSON.stringify(layoutJson)]
-  );
+  draft = {
+    id: versionId,
+    screen_id: screenId,
+    version: nextVersion,
+    status: "draft",
+    title: "Draft",
+    layout_json: layoutJson,
+    created_at: timestamp()
+  };
 
-  const { rows: createdRows } = await pool.query(
-    `SELECT * FROM screen_versions WHERE id = $1`,
-    [versionId]
-  );
-
-  return createdRows[0];
+  store.screenVersions.push(draft);
+  await saveStore(store);
+  return { draft, store };
 }
 
 export async function GET(
   req: Request,
   { params }: { params: { screenId: string } }
 ) {
-  const draft = await getOrCreateDraft(params.screenId);
+  const { draft } = await getOrCreateDraft(params.screenId);
   return Response.json({ draft });
 }
 
@@ -55,19 +52,15 @@ export async function PATCH(
   { params }: { params: { screenId: string } }
 ) {
   const { title, layoutJson } = await req.json();
-  const draft = await getOrCreateDraft(params.screenId);
-
-  await pool.query(
-    `UPDATE screen_versions SET title = $2, layout_json = $3::jsonb WHERE id = $1`,
-    [draft.id, title ?? draft.title, JSON.stringify(layoutJson ?? draft.layout_json ?? {})]
-  );
-
-  const { rows } = await pool.query(
-    `SELECT * FROM screen_versions WHERE id = $1`,
-    [draft.id]
-  );
-
-  return Response.json({ draft: rows[0] });
+  const { draft, store } = await getOrCreateDraft(params.screenId);
+  const updated = {
+    ...draft,
+    title: title ?? draft.title,
+    layout_json: layoutJson ?? draft.layout_json ?? {}
+  };
+  store.screenVersions = store.screenVersions.map((item) => (item.id === draft.id ? updated : item));
+  await saveStore(store);
+  return Response.json({ draft: updated });
 }
 
 export async function POST(
@@ -76,19 +69,23 @@ export async function POST(
 ) {
   // Creates a new draft version for a screen (explicit)
   const { title, layoutJson } = await req.json();
-  const versionId = randomUUID();
-
-  const { rows } = await pool.query(
-    `SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM screen_versions WHERE screen_id = $1`,
-    [params.screenId]
-  );
-  const nextVersion = Number(rows[0]?.next_version ?? 1);
-
-  await pool.query(
-    `INSERT INTO screen_versions (id, screen_id, version, status, title, layout_json)
-     VALUES ($1, $2, $3, 'draft', $4, $5::jsonb)`,
-    [versionId, params.screenId, nextVersion, title ?? null, JSON.stringify(layoutJson ?? {})]
-  );
-
+  const store = await loadStore();
+  const versionId = newId();
+  const nextVersion =
+    Math.max(
+      0,
+      ...store.screenVersions.filter((v) => v.screen_id === params.screenId).map((v) => v.version)
+    ) + 1;
+  const draft = {
+    id: versionId,
+    screen_id: params.screenId,
+    version: nextVersion,
+    status: "draft",
+    title: title ?? null,
+    layout_json: layoutJson ?? {},
+    created_at: timestamp()
+  };
+  store.screenVersions.push(draft);
+  await saveStore(store);
   return Response.json({ versionId, version: nextVersion });
 }

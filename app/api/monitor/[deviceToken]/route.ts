@@ -1,27 +1,26 @@
-import { pool } from "@/lib/db";
+import { loadStore } from "@/lib/blobStore";
 
 export async function GET(
   req: Request,
   { params }: { params: { deviceToken: string } }
 ) {
-  const { rows } = await pool.query(
-    `
-    SELECT sv.*
-    FROM monitors m
-    JOIN monitor_screen_publish msp
-      ON m.id = msp.monitor_id
-    JOIN screen_versions sv
-      ON sv.id = msp.screen_version_id
-    WHERE m.device_token = $1
-      AND msp.is_active = TRUE
-    LIMIT 1
-    `,
-    [params.deviceToken]
-  );
-
-  if (!rows.length) {
+  const store = await loadStore();
+  const monitor = store.monitors.find((m) => m.device_token === params.deviceToken);
+  if (!monitor) {
     return Response.json({ error: "No screen assigned" }, { status: 404 });
   }
 
-  return Response.json(rows[0]);
+  const publish = store.monitorScreenPublish.find(
+    (item) => item.monitor_id === monitor.id && item.is_active
+  );
+  if (!publish) {
+    return Response.json({ error: "No screen assigned" }, { status: 404 });
+  }
+
+  const screenVersion = store.screenVersions.find((sv) => sv.id === publish.screen_version_id);
+  if (!screenVersion) {
+    return Response.json({ error: "No screen assigned" }, { status: 404 });
+  }
+
+  return Response.json(screenVersion);
 }
