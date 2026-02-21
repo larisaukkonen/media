@@ -95,7 +95,7 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
   const [newSceneName, setNewSceneName] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [tab, setTab] = useState<"editor" | "media">("editor");
+  const [tab, setTab] = useState<"editor" | "timeline" | "media">("editor");
   const [uploading, setUploading] = useState(false);
 
   const selectedSceneId = selectedCell?.sceneId ?? null;
@@ -232,6 +232,37 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
     await load();
   };
 
+  const createSceneForCell = async (cellId: string) => {
+    if (!screen?.user_id) {
+      setStatus("Missing screen user id.");
+      return;
+    }
+
+    const res = await fetch("/api/admin/scenes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: screen.user_id, name: `Scene ${cellId}` })
+    });
+
+    if (!res.ok) {
+      setStatus("Failed to create scene.");
+      return;
+    }
+
+    const payload = await res.json();
+    await onAssignScene(cellId, payload.sceneId);
+    setSelectedCell(layout.cells.find((cell) => cell.id === cellId) ?? null);
+    setTab("timeline");
+  };
+
+  const clearSceneFromCell = async (cellId: string) => {
+    await onAssignScene(cellId, null);
+    if (selectedCell?.id === cellId) {
+      setSelectedCell(null);
+      setSceneDraft(null);
+    }
+  };
+
   const saveTimeline = async (nextTimeline: TimelineItem[]) => {
     if (!selectedSceneId) return;
     setSaving(true);
@@ -363,6 +394,13 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
         </button>
         <button
           type="button"
+          className={`tab ${tab === "timeline" ? "active" : ""}`}
+          onClick={() => setTab("timeline")}
+        >
+          Scene timeline
+        </button>
+        <button
+          type="button"
           className={`tab ${tab === "media" ? "active" : ""}`}
           onClick={() => setTab("media")}
         >
@@ -421,6 +459,42 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
                 >
                   <span>Cell {cell.id}</span>
                   <strong>{cell.sceneId ? "Scene linked" : "Empty"}</strong>
+                  <div className="cell-overlay">
+                    <div className="cell-actions">
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          createSceneForCell(cell.id);
+                        }}
+                      >
+                        New
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedCell(cell);
+                        }}
+                      >
+                        Link
+                      </button>
+                      {cell.sceneId ? (
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            clearSceneFromCell(cell.id);
+                          }}
+                        >
+                          Clear
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
                 </button>
               ))}
             </div>
@@ -457,82 +531,89 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
             </div>
           </section>
 
-          <section className="panel">
-            <div className="panel-header">
-              <h2>Scene Timeline</h2>
-              <div className="muted">{selectedSceneId ? `Scene: ${selectedSceneId}` : "Select a cell."}</div>
-            </div>
+        </>
+      ) : null}
 
-            <div className="timeline-actions">
-              <button type="button" onClick={() => addTimelineItem("video")} disabled={!selectedSceneId}>
-                Add video
-              </button>
-              <button type="button" onClick={() => addTimelineItem("image")} disabled={!selectedSceneId}>
-                Add image
-              </button>
-              <button type="button" onClick={() => addTimelineItem("text")} disabled={!selectedSceneId}>
-                Add text
-              </button>
+      {tab === "timeline" ? (
+        <section className="panel">
+          <div className="panel-header">
+            <h2>Scene Timeline</h2>
+            <div className="muted">
+              {selectedSceneId ? `Scene: ${selectedSceneId}` : "Select a cell in the screen editor."}
             </div>
+          </div>
 
-            <div className="timeline">
-              {timeline.map((item, index) => (
-                <div key={item.id} className="timeline-item">
-                  <div className="timeline-row">
-                    <strong>{item.type.toUpperCase()}</strong>
-                    <div className="timeline-controls">
-                      <button type="button" className="ghost" onClick={() => moveTimelineItem(index, -1)}>
-                        Up
-                      </button>
-                      <button type="button" className="ghost" onClick={() => moveTimelineItem(index, 1)}>
-                        Down
-                      </button>
-                      <button type="button" className="ghost" onClick={() => removeTimelineItem(index)}>
-                        Remove
-                      </button>
-                    </div>
+          <div className="timeline-actions">
+            <button type="button" onClick={() => addTimelineItem("video")} disabled={!selectedSceneId}>
+              Add video
+            </button>
+            <button type="button" onClick={() => addTimelineItem("image")} disabled={!selectedSceneId}>
+              Add image
+            </button>
+            <button type="button" onClick={() => addTimelineItem("text")} disabled={!selectedSceneId}>
+              Add text
+            </button>
+          </div>
+
+          <div className="timeline">
+            {timeline.map((item, index) => (
+              <div key={item.id} className="timeline-item">
+                <div className="timeline-row">
+                  <strong>{item.type.toUpperCase()}</strong>
+                  <div className="timeline-controls">
+                    <button type="button" className="ghost" onClick={() => moveTimelineItem(index, -1)}>
+                      Up
+                    </button>
+                    <button type="button" className="ghost" onClick={() => moveTimelineItem(index, 1)}>
+                      Down
+                    </button>
+                    <button type="button" className="ghost" onClick={() => removeTimelineItem(index)}>
+                      Remove
+                    </button>
                   </div>
+                </div>
+                <div className="row">
+                  <input
+                    placeholder="Label"
+                    value={item.label}
+                    onChange={(event) => updateTimelineItem(index, { label: event.target.value })}
+                  />
+                  <input
+                    placeholder="Source URL"
+                    value={item.src ?? ""}
+                    onChange={(event) => updateTimelineItem(index, { src: event.target.value })}
+                  />
+                  <input
+                    type="number"
+                    min={500}
+                    step={500}
+                    value={item.durationMs}
+                    onChange={(event) => updateTimelineItem(index, { durationMs: Number(event.target.value) })}
+                  />
+                </div>
+                {item.type !== "text" ? (
                   <div className="row">
-                    <input
-                      placeholder="Label"
-                      value={item.label}
-                      onChange={(event) => updateTimelineItem(index, { label: event.target.value })}
-                    />
-                    <input
-                      placeholder="Source URL"
+                    <select
                       value={item.src ?? ""}
                       onChange={(event) => updateTimelineItem(index, { src: event.target.value })}
-                    />
-                    <input
-                      type="number"
-                      min={500}
-                      step={500}
-                      value={item.durationMs}
-                      onChange={(event) => updateTimelineItem(index, { durationMs: Number(event.target.value) })}
-                    />
+                    >
+                      <option value="">Pick from media library</option>
+                      {media.filter((asset) => asset.type === item.type).map((asset) => (
+                        <option key={asset.id} value={asset.file_url}>
+                          {asset.file_name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
-                  {item.type !== "text" ? (
-                    <div className="row">
-                      <select
-                        value={item.src ?? ""}
-                        onChange={(event) => updateTimelineItem(index, { src: event.target.value })}
-                      >
-                        <option value="">Pick from media library</option>
-                        {media.filter((asset) => asset.type === item.type).map((asset) => (
-                          <option key={asset.id} value={asset.file_url}>
-                            {asset.file_name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-              {!timeline.length && <div className="empty">No timeline items yet.</div>}
-            </div>
-          </section>
-        </>
-      ) : (
+                ) : null}
+              </div>
+            ))}
+            {!timeline.length && <div className="empty">No timeline items yet.</div>}
+          </div>
+        </section>
+      ) : null}
+
+      {tab === "media" ? (
         <section className="panel">
           <div className="panel-header">
             <h2>Media Library</h2>
@@ -562,7 +643,7 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
             {!media.length && <div className="empty">No media yet.</div>}
           </div>
         </section>
-      )}
+      ) : null}
 
       {status ? <div className="banner">{status}</div> : null}
     </main>
