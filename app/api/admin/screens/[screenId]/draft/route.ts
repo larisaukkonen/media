@@ -80,7 +80,7 @@ export async function POST(
     id: versionId,
     screen_id: params.screenId,
     version: nextVersion,
-    status: "draft",
+    status: "draft" as const,
     title: title ?? null,
     layout_json: layoutJson ?? {},
     created_at: timestamp()
