@@ -1,5 +1,6 @@
 "use client";
 
+import type { ChangeEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 type Screen = { id: string; name: string; user_id: string; created_at: string };
@@ -29,6 +30,15 @@ type SceneDraft = {
   id: string;
   scene_id: string;
   data_json: SceneData;
+};
+
+type MediaAsset = {
+  id: string;
+  file_name: string;
+  file_url: string;
+  mime_type: string;
+  type: "image" | "video";
+  created_at: string;
 };
 
 type TimelineItem = {
@@ -80,10 +90,13 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
   });
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [sceneDraft, setSceneDraft] = useState<SceneDraft | null>(null);
+  const [media, setMedia] = useState<MediaAsset[]>([]);
   const [selectedCell, setSelectedCell] = useState<LayoutCell | null>(null);
   const [newSceneName, setNewSceneName] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState<"editor" | "media">("editor");
+  const [uploading, setUploading] = useState(false);
 
   const selectedSceneId = selectedCell?.sceneId ?? null;
   const timeline = sceneDraft?.data_json?.timeline ?? [];
@@ -120,9 +133,26 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
     setScenes(scenesPayload.scenes ?? []);
   };
 
+  const loadMedia = async (userId?: string) => {
+    if (!userId) return;
+    const res = await fetch(`/api/admin/media?userId=${encodeURIComponent(userId)}`);
+    if (!res.ok) {
+      setStatus("Failed to load media library.");
+      return;
+    }
+    const payload = await res.json();
+    setMedia(payload.media ?? []);
+  };
+
   useEffect(() => {
     load();
   }, [params.screenId]);
+
+  useEffect(() => {
+    if (screen?.user_id) {
+      loadMedia(screen.user_id);
+    }
+  }, [screen?.user_id]);
 
   useEffect(() => {
     if (!selectedSceneId) {
@@ -245,158 +275,294 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
     await saveTimeline(next);
   };
 
+  const uploadFile = async (file: File) => {
+    if (!screen?.user_id) {
+      setStatus("Create a user before uploading media.");
+      return;
+    }
+
+    setUploading(true);
+    setStatus(null);
+
+    try {
+      const uploadRes = await fetch("/api/admin/media/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, mimeType: file.type })
+      });
+
+      const uploadPayload = uploadRes.ok ? await uploadRes.json() : {};
+      const signedUrl = uploadPayload.signedUrl as string | undefined;
+      const publicUrl = (uploadPayload.publicUrl as string | undefined) ?? "";
+
+      if (signedUrl && !signedUrl.includes("your-storage-signed-url")) {
+        const putRes = await fetch(signedUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type },
+          body: file
+        });
+
+        if (!putRes.ok) {
+          throw new Error("Upload failed.");
+        }
+      } else {
+        setStatus("Upload URL is a placeholder. File metadata saved, but file not uploaded.");
+      }
+
+      const fileUrl = publicUrl || URL.createObjectURL(file);
+      const type = file.type.startsWith("video") ? "video" : "image";
+
+      const res = await fetch("/api/admin/media", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: screen.user_id,
+          fileUrl,
+          fileName: file.name,
+          fileSize: file.size,
+          type,
+          mimeType: file.type
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to save media metadata.");
+      }
+
+      await loadMedia(screen.user_id);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleFileSelect = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+    for (const file of files) {
+      await uploadFile(file);
+    }
+    event.target.value = "";
+  };
+
   return (
     <main className="shell">
       <header className="hero">
-        <div className="pill">Screen Editor</div>
+        <div className="pill">Screen Builder</div>
         <h1>{screen?.name ?? "Loading..."}</h1>
         <p>Configure orientation, build a fixed grid, and assign reusable scenes to each cell.</p>
       </header>
 
-      <section className="panel">
-        <div className="panel-header">
-          <h2>Screen Layout</h2>
-          <div className="muted">Draft id: {draft?.id ?? "-"}</div>
-        </div>
-        <div className="row">
-          <label className="field">
-            Orientation
-            <select
-              value={layout.orientation}
-              onChange={(event) => onOrientationChange(event.target.value as LayoutJson["orientation"])}
-            >
-              <option value="landscape">Landscape</option>
-              <option value="portrait">Portrait</option>
-            </select>
-          </label>
-          <label className="field">
-            Rows
-            <input
-              type="number"
-              min={1}
-              max={6}
-              value={layout.rows}
-              onChange={(event) => onGridChange(Number(event.target.value), layout.cols)}
-            />
-          </label>
-          <label className="field">
-            Columns
-            <input
-              type="number"
-              min={1}
-              max={6}
-              value={layout.cols}
-              onChange={(event) => onGridChange(layout.rows, Number(event.target.value))}
-            />
-          </label>
-          <div className="status">{saving ? "Saving..." : ""}</div>
-        </div>
+      <nav className="tabs">
+        <button
+          type="button"
+          className={`tab ${tab === "editor" ? "active" : ""}`}
+          onClick={() => setTab("editor")}
+        >
+          Screen editor
+        </button>
+        <button
+          type="button"
+          className={`tab ${tab === "media" ? "active" : ""}`}
+          onClick={() => setTab("media")}
+        >
+          Media library
+        </button>
+      </nav>
 
-        <div className={`grid-preview ${layout.orientation}`} style={gridTemplate}>
-          {layout.cells.map((cell) => (
-            <button
-              type="button"
-              key={cell.id}
-              className={`cell ${selectedCell?.id === cell.id ? "active" : ""}`}
-              onClick={() => setSelectedCell(cell)}
-            >
-              <span>Cell {cell.id}</span>
-              <strong>{cell.sceneId ? "Scene linked" : "Empty"}</strong>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <h2>Assign Scene To Selected Cell</h2>
-          <div className="muted">
-            {selectedCell ? `Selected: ${selectedCell.id}` : "Select a cell to attach a scene."}
-          </div>
-        </div>
-        <div className="row">
-          <select
-            value={selectedSceneId ?? ""}
-            onChange={(event) => onAssignScene(selectedCell?.id ?? "", event.target.value || null)}
-            disabled={!selectedCell}
-          >
-            <option value="">No scene</option>
-            {scenes.map((scene) => (
-              <option key={scene.id} value={scene.id}>
-                {scene.name}
-              </option>
-            ))}
-          </select>
-          <input
-            placeholder="New scene name"
-            value={newSceneName}
-            onChange={(event) => setNewSceneName(event.target.value)}
-          />
-          <button type="button" onClick={createScene}>
-            Create scene
-          </button>
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-header">
-          <h2>Scene Timeline</h2>
-          <div className="muted">{selectedSceneId ? `Scene: ${selectedSceneId}` : "Select a cell."}</div>
-        </div>
-
-        <div className="timeline-actions">
-          <button type="button" onClick={() => addTimelineItem("video")} disabled={!selectedSceneId}>
-            Add video
-          </button>
-          <button type="button" onClick={() => addTimelineItem("image")} disabled={!selectedSceneId}>
-            Add image
-          </button>
-          <button type="button" onClick={() => addTimelineItem("text")} disabled={!selectedSceneId}>
-            Add text
-          </button>
-        </div>
-
-        <div className="timeline">
-          {timeline.map((item, index) => (
-            <div key={item.id} className="timeline-item">
-              <div className="timeline-row">
-                <strong>{item.type.toUpperCase()}</strong>
-                <div className="timeline-controls">
-                  <button type="button" className="ghost" onClick={() => moveTimelineItem(index, -1)}>
-                    Up
-                  </button>
-                  <button type="button" className="ghost" onClick={() => moveTimelineItem(index, 1)}>
-                    Down
-                  </button>
-                  <button type="button" className="ghost" onClick={() => removeTimelineItem(index)}>
-                    Remove
-                  </button>
-                </div>
-              </div>
-              <div className="row">
-                <input
-                  placeholder="Label"
-                  value={item.label}
-                  onChange={(event) => updateTimelineItem(index, { label: event.target.value })}
-                />
-                <input
-                  placeholder="Source URL"
-                  value={item.src ?? ""}
-                  onChange={(event) => updateTimelineItem(index, { src: event.target.value })}
-                />
+      {tab === "editor" ? (
+        <>
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Screen Layout</h2>
+              <div className="muted">Draft id: {draft?.id ?? "-"}</div>
+            </div>
+            <div className="row">
+              <label className="field">
+                Orientation
+                <select
+                  value={layout.orientation}
+                  onChange={(event) => onOrientationChange(event.target.value as LayoutJson["orientation"])}
+                >
+                  <option value="landscape">Landscape (16:9)</option>
+                  <option value="portrait">Portrait (9:16)</option>
+                </select>
+              </label>
+              <label className="field">
+                Rows
                 <input
                   type="number"
-                  min={500}
-                  step={500}
-                  value={item.durationMs}
-                  onChange={(event) => updateTimelineItem(index, { durationMs: Number(event.target.value) })}
+                  min={1}
+                  max={6}
+                  value={layout.rows}
+                  onChange={(event) => onGridChange(Number(event.target.value), layout.cols)}
                 />
+              </label>
+              <label className="field">
+                Columns
+                <input
+                  type="number"
+                  min={1}
+                  max={6}
+                  value={layout.cols}
+                  onChange={(event) => onGridChange(layout.rows, Number(event.target.value))}
+                />
+              </label>
+              <div className="status">{saving ? "Saving..." : ""}</div>
+            </div>
+
+            <div className={`grid-preview ${layout.orientation}`} style={gridTemplate}>
+              {layout.cells.map((cell) => (
+                <button
+                  type="button"
+                  key={cell.id}
+                  className={`cell ${selectedCell?.id === cell.id ? "active" : ""}`}
+                  onClick={() => setSelectedCell(cell)}
+                >
+                  <span>Cell {cell.id}</span>
+                  <strong>{cell.sceneId ? "Scene linked" : "Empty"}</strong>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Assign Scene To Selected Cell</h2>
+              <div className="muted">
+                {selectedCell ? `Selected: ${selectedCell.id}` : "Select a cell to attach a scene."}
               </div>
             </div>
-          ))}
-          {!timeline.length && <div className="empty">No timeline items yet.</div>}
-        </div>
-      </section>
+            <div className="row">
+              <select
+                value={selectedSceneId ?? ""}
+                onChange={(event) => onAssignScene(selectedCell?.id ?? "", event.target.value || null)}
+                disabled={!selectedCell}
+              >
+                <option value="">No scene</option>
+                {scenes.map((scene) => (
+                  <option key={scene.id} value={scene.id}>
+                    {scene.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                placeholder="New scene name"
+                value={newSceneName}
+                onChange={(event) => setNewSceneName(event.target.value)}
+              />
+              <button type="button" onClick={createScene}>
+                Create scene
+              </button>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="panel-header">
+              <h2>Scene Timeline</h2>
+              <div className="muted">{selectedSceneId ? `Scene: ${selectedSceneId}` : "Select a cell."}</div>
+            </div>
+
+            <div className="timeline-actions">
+              <button type="button" onClick={() => addTimelineItem("video")} disabled={!selectedSceneId}>
+                Add video
+              </button>
+              <button type="button" onClick={() => addTimelineItem("image")} disabled={!selectedSceneId}>
+                Add image
+              </button>
+              <button type="button" onClick={() => addTimelineItem("text")} disabled={!selectedSceneId}>
+                Add text
+              </button>
+            </div>
+
+            <div className="timeline">
+              {timeline.map((item, index) => (
+                <div key={item.id} className="timeline-item">
+                  <div className="timeline-row">
+                    <strong>{item.type.toUpperCase()}</strong>
+                    <div className="timeline-controls">
+                      <button type="button" className="ghost" onClick={() => moveTimelineItem(index, -1)}>
+                        Up
+                      </button>
+                      <button type="button" className="ghost" onClick={() => moveTimelineItem(index, 1)}>
+                        Down
+                      </button>
+                      <button type="button" className="ghost" onClick={() => removeTimelineItem(index)}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                  <div className="row">
+                    <input
+                      placeholder="Label"
+                      value={item.label}
+                      onChange={(event) => updateTimelineItem(index, { label: event.target.value })}
+                    />
+                    <input
+                      placeholder="Source URL"
+                      value={item.src ?? ""}
+                      onChange={(event) => updateTimelineItem(index, { src: event.target.value })}
+                    />
+                    <input
+                      type="number"
+                      min={500}
+                      step={500}
+                      value={item.durationMs}
+                      onChange={(event) => updateTimelineItem(index, { durationMs: Number(event.target.value) })}
+                    />
+                  </div>
+                  {item.type !== "text" ? (
+                    <div className="row">
+                      <select
+                        value={item.src ?? ""}
+                        onChange={(event) => updateTimelineItem(index, { src: event.target.value })}
+                      >
+                        <option value="">Pick from media library</option>
+                        {media.filter((asset) => asset.type === item.type).map((asset) => (
+                          <option key={asset.id} value={asset.file_url}>
+                            {asset.file_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+              {!timeline.length && <div className="empty">No timeline items yet.</div>}
+            </div>
+          </section>
+        </>
+      ) : (
+        <section className="panel">
+          <div className="panel-header">
+            <h2>Media Library</h2>
+            <div className="muted">Upload images or videos and reuse them in timelines.</div>
+          </div>
+          <div className="row">
+            <input type="file" accept="image/*,video/*" multiple onChange={handleFileSelect} />
+            <div className="status">{uploading ? "Uploading..." : ""}</div>
+          </div>
+          <div className="hint">Upload URL signing is still a placeholder until storage is wired.</div>
+          <div className="media-grid">
+            {media.map((asset) => (
+              <div key={asset.id} className="media-card">
+                <div className="media-thumb">
+                  {asset.type === "image" ? (
+                    <img src={asset.file_url} alt={asset.file_name} />
+                  ) : (
+                    <video src={asset.file_url} />
+                  )}
+                </div>
+                <div className="media-meta">
+                  <strong>{asset.file_name}</strong>
+                  <div className="muted">{asset.mime_type}</div>
+                </div>
+              </div>
+            ))}
+            {!media.length && <div className="empty">No media yet.</div>}
+          </div>
+        </section>
+      )}
 
       {status ? <div className="banner">{status}</div> : null}
     </main>
