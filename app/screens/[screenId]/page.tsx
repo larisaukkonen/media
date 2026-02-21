@@ -323,13 +323,13 @@ export default function ScreenEditor({ params }: { params: { screenId: string } 
       await upload(file.name, file, {
         access: "public",
         handleUploadUrl: "/api/admin/media/upload",
-        clientPayload: {
+        clientPayload: JSON.stringify({
           userId: screen.user_id,
           fileName: file.name,
           fileSize: file.size,
           mimeType: file.type,
           type
-        }
+        })
       });
 
       await loadMedia(screen.user_id);
